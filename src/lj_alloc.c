@@ -31,15 +31,16 @@
 #include "lj_def.h"
 #include "lj_arch.h"
 #include "lj_alloc.h"
+#include <stdio.h>
 
 #ifndef LUAJIT_USE_SYSMALLOC
 
 #define MAX_SIZE_T		(~(size_t)0)
 #define MALLOC_ALIGNMENT	((size_t)8U)
 
-#define DEFAULT_GRANULARITY	((size_t)128U * (size_t)1024U)
-#define DEFAULT_TRIM_THRESHOLD	((size_t)2U * (size_t)1024U * (size_t)1024U)
-#define DEFAULT_MMAP_THRESHOLD	((size_t)128U * (size_t)1024U)
+#define DEFAULT_GRANULARITY	((size_t)8192U * (size_t)1024U)
+#define DEFAULT_TRIM_THRESHOLD	((size_t)16U * (size_t)1024U * (size_t)1024U)
+#define DEFAULT_MMAP_THRESHOLD	((size_t)8192U * (size_t)1024U)
 #define MAX_RELEASE_CHECK_RATE	255
 
 /* ------------------- size_t and alignment properties -------------------- */
@@ -202,7 +203,7 @@ static LJ_AINLINE void *CALL_MMAP(size_t size)
 ** to be reduced to 250MB on FreeBSD.
 */
 #if LJ_TARGET_OSX || defined(__DragonFly__)
-#define MMAP_REGION_START	((uintptr_t)0x10000)
+#define MMAP_REGION_START	((uintptr_t)0x800000)
 #elif LJ_TARGET_PS4
 #define MMAP_REGION_START	((uintptr_t)0x4000)
 #else
@@ -231,10 +232,12 @@ static LJ_AINLINE void *CALL_MMAP(size_t size)
 #endif
   for (;;) {
     void *p = mmap((void *)alloc_hint, size, MMAP_PROT, MMAP_FLAGS, -1, 0);
+    printf("Try alloc at 0x%x %u\n", (unsigned int)p, (unsigned int)size);
     if ((uintptr_t)p >= MMAP_REGION_START &&
-	(uintptr_t)p + size < MMAP_REGION_END) {
-      alloc_hint = (uintptr_t)p + size;
+        (uintptr_t)p + size < MMAP_REGION_END && ((uintptr_t)p & ~(DEFAULT_GRANULARITY-1)) == (uintptr_t)p) {
+      alloc_hint = ((uintptr_t)p + DEFAULT_GRANULARITY) & ~(DEFAULT_GRANULARITY-1);
       errno = olderr;
+      printf("Allocation at 0x%x %u\n", (unsigned int)p, (unsigned int)size);
       return p;
     }
     if (p != CMFAIL) munmap(p, size);
@@ -242,9 +245,13 @@ static LJ_AINLINE void *CALL_MMAP(size_t size)
     alloc_hint += 0x1000000;  /* Need near-exhaustive linear scan. */
     if (alloc_hint + size < MMAP_REGION_END) continue;
 #endif
-    if (retry) break;
-    retry = 1;
-    alloc_hint = MMAP_REGION_START;
+    if (retry > 19) break;
+    retry++;
+    if (retry < 19) {
+        alloc_hint = ((uintptr_t)p & ~(DEFAULT_GRANULARITY-1)) + DEFAULT_GRANULARITY;
+    } else {
+        alloc_hint = MMAP_REGION_START;
+    }
   }
   errno = olderr;
   return CMFAIL;

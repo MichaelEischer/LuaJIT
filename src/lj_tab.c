@@ -29,7 +29,8 @@ static LJ_AINLINE Node *hashmask(const GCtab *t, uint32_t hash)
 #define hashlohi(t, lo, hi)	hashmask((t), hashrot((lo), (hi)))
 #define hashnum(t, o)		hashlohi((t), (o)->u32.lo, ((o)->u32.hi << 1))
 #define hashptr(t, p)		hashlohi((t), u32ptr(p), u32ptr(p) + HASH_BIAS)
-#define hashgcref(t, r)		hashlohi((t), gcrefu(r), gcrefu(r) + HASH_BIAS)
+#define gcrefu2(r)              (gcrefu(r) & ~(8192 * 1024 - 1))
+#define hashgcref(t, r)		hashlohi((t), gcrefu2(r), gcrefu2(r) + HASH_BIAS)
 
 /* Hash an arbitrary key and return its anchor position in the hash table. */
 static Node *hashkey(const GCtab *t, cTValue *key)

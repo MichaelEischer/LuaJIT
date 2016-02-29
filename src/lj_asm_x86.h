@@ -1106,8 +1106,11 @@ static void asm_href(ASMState *as, IRIns *ir)
 	emit_rr(as, XO_MOVDto, key, tmp);
 #endif
       } else {
+        emit_gri(as, XG_ARITHi(XOg_AND), tmp, ~(int32_t)(8192*1024-1));
 	emit_rr(as, XO_MOV, tmp, key);
-	emit_rmro(as, XO_LEA, dest, key, HASH_BIAS);
+        emit_rmro(as, XO_LEA, dest, dest, HASH_BIAS);
+        emit_gri(as, XG_ARITHi(XOg_AND), dest, ~(int32_t)(8192*1024-1));
+        emit_rr(as, XO_MOV, dest, key);
       }
     }
   }
