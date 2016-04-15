@@ -58,8 +58,8 @@ static LJ_AINLINE void newhpart(lua_State *L, GCtab *t, uint32_t hbits)
     lj_err_msg(L, LJ_ERR_TABOV);
   hsize = 1u << hbits;
   node = lj_mem_newvec(L, hsize, Node);
-  setmref(node->freetop, &node[hsize]);
   setmref(t->node, node);
+  setmref(t->freetop, &node[hsize]);
   t->hmask = hsize-1;
 }
 
@@ -108,6 +108,7 @@ static GCtab *newtab(lua_State *L, uint32_t asize, uint32_t hbits)
     t->asize = asize;
     t->hmask = 0;
     setmref(t->node, &G(L)->nilnode);
+    setmref(t->freetop, &G(L)->nilnode);
   } else {  /* Otherwise separately allocate the array part. */
     t = lj_mem_newobj(L, GCtab);
     t->gct = ~LJ_TTAB;
@@ -118,6 +119,7 @@ static GCtab *newtab(lua_State *L, uint32_t asize, uint32_t hbits)
     t->asize = 0;  /* In case the array allocation fails. */
     t->hmask = 0;
     setmref(t->node, &G(L)->nilnode);
+    setmref(t->freetop, &G(L)->nilnode);
     if (asize > 0) {
       if (asize > LJ_MAX_ASIZE)
 	lj_err_msg(L, LJ_ERR_TABOV);
@@ -185,7 +187,7 @@ GCtab * LJ_FASTCALL lj_tab_dup(lua_State *L, const GCtab *kt)
     Node *node = noderef(t->node);
     Node *knode = noderef(kt->node);
     ptrdiff_t d = (char *)node - (char *)knode;
-    setmref(node->freetop, (Node *)((char *)noderef(knode->freetop) + d));
+    setmref(t->freetop, (Node *)((char *)noderef(kt->freetop) + d));
     for (i = 0; i <= hmask; i++) {
       Node *kn = &knode[i];
       Node *n = &node[i];
@@ -247,6 +249,7 @@ static void resizetab(lua_State *L, GCtab *t, uint32_t asize, uint32_t hbits)
   } else {
     global_State *g = G(L);
     setmref(t->node, &g->nilnode);
+    setmref(t->freetop, &g->nilnode);
     t->hmask = 0;
   }
   if (asize < oldasize) {  /* Array part shrinks? */
@@ -428,7 +431,7 @@ TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
   Node *n = hashkey(t, key);
   if (!tvisnil(&n->val) || t->hmask == 0) {
     Node *nodebase = noderef(t->node);
-    Node *collide, *freenode = noderef(nodebase->freetop);
+    Node *collide, *freenode = noderef(t->freetop);
     lua_assert(freenode >= nodebase && freenode <= nodebase+t->hmask+1);
     do {
       if (freenode == nodebase) {  /* No free node found? */
@@ -436,7 +439,7 @@ TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
 	return lj_tab_set(L, t, key);  /* Retry key insertion. */
       }
     } while (!tvisnil(&(--freenode)->key));
-    setmref(nodebase->freetop, freenode);
+    setmref(t->freetop, freenode);
     lua_assert(freenode != &G(L)->nilnode);
     collide = hashkey(t, &n->key);
     if (collide != n) {  /* Colliding node not the main node? */
