@@ -402,7 +402,7 @@ typedef struct Node {
   TValue val;		/* Value object. Must be first field. */
   TValue key;		/* Key object. */
   MRef next;		/* Hash chain. */
-  MRef padding;
+  uint32_t index;       /* Insert order, index in order array */
 } Node;
 
 LJ_STATIC_ASSERT(offsetof(Node, val) == 0);
@@ -418,6 +418,8 @@ typedef struct GCtab {
   uint32_t asize;	/* Size of array part (keys [0, asize-1]). */
   uint32_t hmask;	/* Hash part mask (size of hash part - 1). */
   MRef freetop;		/* Top of free elements (stored in t->node[0]). */
+  MRef orderarray;	/* Stores pointer to nodes in insert order, same size as hash part */
+  uint32_t orderarraynext;  /* Next free slot in order array */
   MRef padding;
 } GCtab;
 
@@ -425,6 +427,7 @@ typedef struct GCtab {
 #define tabref(r)	(&gcref((r))->tab)
 #define noderef(r)	(mref((r), Node))
 #define nextnode(n)	(mref((n)->next, Node))
+#define memref(r)	(mref((r), MRef))
 
 /* -- State objects ------------------------------------------------------- */
 

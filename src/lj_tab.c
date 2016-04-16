@@ -61,6 +61,9 @@ static LJ_AINLINE void newhpart(lua_State *L, GCtab *t, uint32_t hbits)
   setmref(t->node, node);
   setmref(t->freetop, &node[hsize]);
   t->hmask = hsize-1;
+  MRef *orderarray = lj_mem_newvec(L, hsize, MRef);
+  setmref(t->orderarray, orderarray);
+  t->orderarraynext = 0;
 }
 
 /*
@@ -80,6 +83,11 @@ static LJ_AINLINE void clearhpart(GCtab *t)
     setmref(n->next, NULL);
     setnilV(&n->key);
     setnilV(&n->val);
+    n->index = ~0u;
+  }
+  MRef *orderarray = memref(t->orderarray);
+  for (i = 0; i <= hmask; i++) {
+    setmref(orderarray[i], NULL);
   }
 }
 
@@ -127,6 +135,8 @@ static GCtab *newtab(lua_State *L, uint32_t asize, uint32_t hbits)
       t->asize = asize;
     }
   }
+  setmref(t->orderarray, NULL);
+  t->orderarraynext = 0;
   if (hbits)
     newhpart(L, t, hbits);
   return t;
@@ -193,8 +203,15 @@ GCtab * LJ_FASTCALL lj_tab_dup(lua_State *L, const GCtab *kt)
       Node *n = &node[i];
       Node *next = nextnode(kn);
       /* Don't use copyTV here, since it asserts on a copy of a dead key. */
-      n->val = kn->val; n->key = kn->key;
+      n->val = kn->val; n->key = kn->key; n->index = kn->index;
       setmref(n->next, next == NULL? next : (Node *)((char *)next + d));
+    }
+    MRef *korderarray = memref(kt->orderarray);
+    MRef *orderarray = memref(t->orderarray);
+    t->orderarraynext = kt->orderarraynext;
+    for (i = 0; i <= hmask; i++) {
+        Node *koa = noderef(korderarray[i]);
+        setmref(orderarray[i], koa == NULL? koa : (Node *)((char *)koa + d));
     }
   }
   return t;
@@ -203,8 +220,10 @@ GCtab * LJ_FASTCALL lj_tab_dup(lua_State *L, const GCtab *kt)
 /* Free a table. */
 void LJ_FASTCALL lj_tab_free(global_State *g, GCtab *t)
 {
-  if (t->hmask > 0)
+  if (t->hmask > 0) {
     lj_mem_freevec(g, noderef(t->node), t->hmask+1, Node);
+    lj_mem_freevec(g, noderef(t->orderarray), t->hmask+1, MRef);
+  }
   if (t->asize > 0 && LJ_MAX_COLOSIZE != 0 && t->colo <= 0)
     lj_mem_freevec(g, tvref(t->array), t->asize, TValue);
   if (LJ_MAX_COLOSIZE != 0 && t->colo)
@@ -219,6 +238,7 @@ void LJ_FASTCALL lj_tab_free(global_State *g, GCtab *t)
 static void resizetab(lua_State *L, GCtab *t, uint32_t asize, uint32_t hbits)
 {
   Node *oldnode = noderef(t->node);
+  MRef *oldorderarray = memref(t->orderarray);
   uint32_t oldasize = t->asize;
   uint32_t oldhmask = t->hmask;
   if (asize > oldasize) {  /* Array part grows? */
@@ -251,6 +271,8 @@ static void resizetab(lua_State *L, GCtab *t, uint32_t asize, uint32_t hbits)
     setmref(t->node, &g->nilnode);
     setmref(t->freetop, &g->nilnode);
     t->hmask = 0;
+    setmref(t->orderarray, NULL);
+    t->orderarraynext = 0;
   }
   if (asize < oldasize) {  /* Array part shrinks? */
     TValue *array = tvref(t->array);
@@ -268,12 +290,15 @@ static void resizetab(lua_State *L, GCtab *t, uint32_t asize, uint32_t hbits)
     global_State *g;
     uint32_t i;
     for (i = 0; i <= oldhmask; i++) {
-      Node *n = &oldnode[i];
+      Node *n = noderef(oldorderarray[i]);
+      if (n == NULL)
+          break;
       if (!tvisnil(&n->val))
 	copyTV(L, lj_tab_set(L, t, &n->key), &n->val);
     }
     g = G(L);
     lj_mem_freevec(g, oldnode, oldhmask+1, Node);
+    lj_mem_freevec(g, oldorderarray, oldhmask+1, MRef);
   }
 }
 
@@ -429,7 +454,8 @@ cTValue *lj_tab_get(lua_State *L, GCtab *t, cTValue *key)
 TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
 {
   Node *n = hashkey(t, key);
-  if (!tvisnil(&n->val) || t->hmask == 0) {
+  /* Never reuse nodes as this would break the insert order */
+  if (!tvisnil(&n->key) || t->hmask == 0) {
     Node *nodebase = noderef(t->node);
     Node *collide, *freenode = noderef(t->freetop);
     lua_assert(freenode >= nodebase && freenode <= nodebase+t->hmask+1);
@@ -450,6 +476,9 @@ TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
       freenode->val = n->val;
       freenode->key = n->key;
       freenode->next = n->next;
+      freenode->index = n->index;
+      lua_assert(noderef(memref(t->orderarray)[n->index]) == n);
+      setmref(memref(t->orderarray)[n->index], freenode);
       setmref(n->next, NULL);
       setnilV(&n->val);
       /* Rechain pseudo-resurrected string keys with colliding hashes. */
@@ -470,6 +499,9 @@ TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
       n = freenode;
     }
   }
+  lua_assert(t->orderarraynext <= t->hmask);
+  n->index = t->orderarraynext++;
+  setmref(memref(t->orderarray)[n->index], n);
   n->key.u64 = key->u64;
   if (LJ_UNLIKELY(tvismzero(&n->key)))
     n->key.u64 = 0;
@@ -552,7 +584,7 @@ static uint32_t keyindex(lua_State *L, GCtab *t, cTValue *key)
     Node *n = hashkey(t, key);
     do {
       if (lj_obj_equal(&n->key, key))
-	return t->asize + (uint32_t)(n - noderef(t->node));
+        return t->asize + n->index;
 	/* Hash key indexes: [t->asize..t->asize+t->nmask] */
     } while ((n = nextnode(n)));
     if (key->u32.hi == 0xfffe7fff)  /* ITERN was despecialized while running. */
@@ -573,8 +605,15 @@ int lj_tab_next(lua_State *L, GCtab *t, TValue *key)
       copyTV(L, key+1, arrayslot(t, i));
       return 1;
     }
+  MRef *orderarray = memref(t->orderarray);
+  if (orderarray == NULL) { /* prevent crash if hash part is missing */
+      lua_assert(t->hmask == 0);
+      return 0;
+  }
   for (i -= t->asize; i <= t->hmask; i++) {  /* Then traverse the hash keys. */
-    Node *n = &noderef(t->node)[i];
+    Node *n = noderef(orderarray[i]);
+    if (n == NULL)
+      break;
     if (!tvisnil(&n->val)) {
       copyTV(L, key, &n->key);
       copyTV(L, key+1, &n->val);

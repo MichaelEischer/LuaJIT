@@ -202,7 +202,7 @@ LUA_API lua_State *lua_newstate(lua_Alloc f, void *ud)
   setnilV(registry(L));
   setnilV(&g->nilnode.val);
   setnilV(&g->nilnode.key);
-  setmref(g->nilnode.padding, 0xdeadbeef);
+  g->nilnode.index = ~0u;
   lj_str_initbuf(&g->tmpbuf);
   g->gc.state = GCSpause;
   setgcref(g->gc.root, obj2gco(L));
