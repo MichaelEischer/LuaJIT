@@ -500,6 +500,11 @@ TValue *lj_tab_newkey(lua_State *L, GCtab *t, cTValue *key)
     }
   }
   lua_assert(t->orderarraynext <= t->hmask);
+  /* previous order array index is set */
+  lua_assert(t->orderarraynext == 0
+             || noderef(memref(t->orderarray)[t->orderarraynext-1]) != NULL);
+  /* current order array index is empty */
+  lua_assert(noderef(memref(t->orderarray)[t->orderarraynext]) == NULL);
   n->index = t->orderarraynext++;
   setmref(memref(t->orderarray)[n->index], n);
   n->key.u64 = key->u64;
