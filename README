@@ -1,5 +1,54 @@
-README for LuaJIT 2.0.4
------------------------
+Deterministic LuaJIT 2.0.4
+--------------------------
+
+This modification of LuaJIT aims to ensure deterministic execution of lua scripts.
+The motivation for a deterministic execution is that running a script multiple times
+with the same inputs always yields the same results. This can be used for fault-
+tolerance using state machine replication or, as intended here, to simplify debugging
+by looking at the problem over and over again.
+
+This requires recording and replaying all inputs that are observable by the program.
+These inputs comprise of every input directly passed to the program, everything read
+by the program, but also of indirect inputs like memory layout. Another way to
+avoid recording too much is to hide inputs by introducing certain conventions that
+replace an undefined behavior of an implementation by a deterministic one.
+
+In LUA memory addresses can't be observed directly (ignoring the FFI-library),
+however some information is leaked by tostring and pairs/next. The first returns
+a string containing the objects memory address, whereas the latter may produce
+a different ordering during iteration. This is caused by deriving the hash codes
+from the memory address. The problem is solved by ensuring that the iteration
+always proceeds in insertion order.
+
+
+
+LuaJIT modifications:
+Implemented:
+- pairs/next -> iteration in insertion order
+
+Todo:
+- Prevent Memory address leaks (tostring, lua_tostring)
+- "Deterministic" Garbage collection? (collectgarbage, lua_gc, weak tables)
+- Input recording (either input data or result of function call)
+-- luaL_loadfile
+-- file:*, io.*
+-- package.{loaders, loadlib, searchpath}
+-- os.*
+-- debug.debug
+
+
+
+Possibly problematic (must be reviewed):
+- Random numbers (ensure that math.randomseed input is recorded)
+- Garbage collection with __gc metafunction
+- Debugging hook (debug.sethook, lua_sethook, triggering is dependent on JIT activation)
+- Environment variables (LUA_CPATH, LUA_INIT, LUA_PATH)
+- ffi.*
+- jit.*
+- Own C functions (ensure determinism or remember results)
+- External modules
+
+
 
 LuaJIT is a Just-In-Time (JIT) compiler for the Lua programming language.
 
@@ -13,4 +62,3 @@ Documentation for LuaJIT is available in HTML format.
 Please point your favorite browser to:
 
  doc/luajit.html
-
